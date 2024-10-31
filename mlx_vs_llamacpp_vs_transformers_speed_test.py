@@ -7,6 +7,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
+from mlx_lm import load, generate
 
 def test_llama_cpp(
     model_repo: str,
@@ -90,6 +91,50 @@ def test_transformers(
         short_output = output[0, len(conversation[0]):]
         output_text = tokenizer.batch_decode([short_output], skip_special_tokens=True)
         output_len = len(output_text[0])
+        output_lens.append(output_len)
+        end_time = time.time()
+        times.append(end_time - start_time)
+    
+    return {
+        "avg_time": sum(times) / len(times),
+        "total_time": sum(times),
+        "num_prompts": len(times),
+        "output_lens": output_lens
+    }
+
+def test_mlx(
+    model_name: str,
+    test_prompts: List[str],
+    system_prompt: str = "",
+) -> Dict[str, float]:
+    """Test MLX-LM model performance."""
+    # Initialize mlx model
+    model, tokenizer = load(model_name)
+    
+    # Warm-up
+    prompt = tokenizer.apply_chat_template([{"role": "user", "content": "warm up"}], tokenize=False)
+    _ = generate(model, tokenizer, prompt, max_tokens=10)
+    
+    # Testing
+    times = []
+    output_lens = []
+    for prompt in test_prompts:
+        start_time = time.time()
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        # Convert messages to MLX format
+        formatted_prompt = tokenizer.apply_chat_template(messages, tokenize=False)
+        
+        output = generate(
+            model, 
+            tokenizer, 
+            formatted_prompt,
+            max_tokens=50
+        )
+        output_len = len(output)
         output_lens.append(output_len)
         end_time = time.time()
         times.append(end_time - start_time)
@@ -216,6 +261,11 @@ if __name__ == "__main__":
             test_prompts=TEST_PROMPTS
         )
         
+        mlx_results = test_mlx(
+            model_name="HuggingFaceTB/SmolLM2-1.7B-Instruct",
+            test_prompts=TEST_PROMPTS
+        )
+        
         # Test with short system prompt
         print("\nTesting with short system prompt:")
         llama_results_short = test_llama_cpp(
@@ -227,6 +277,12 @@ if __name__ == "__main__":
         
         transformers_results_short = test_transformers(
             model_name="HuggingFaceTB/SmolLM2-1.7B-Intermediate-SFT-v2-summarization-lora-r32-a64-merged-2",
+            test_prompts=TEST_PROMPTS,
+            system_prompt=SHORT_SYSTEM_PROMPT
+        )
+        
+        mlx_results_short = test_mlx(
+            model_name="HuggingFaceTB/SmolLM2-1.7B-Instruct",
             test_prompts=TEST_PROMPTS,
             system_prompt=SHORT_SYSTEM_PROMPT
         )
@@ -246,6 +302,12 @@ if __name__ == "__main__":
             system_prompt=LONG_SYSTEM_PROMPT
         )
         
+        mlx_results_long = test_mlx(
+            model_name="HuggingFaceTB/SmolLM2-1.7B-Instruct",
+            test_prompts=TEST_PROMPTS,
+            system_prompt=LONG_SYSTEM_PROMPT
+        )
+        
         # Test with extra long system prompt
         print("\nTesting with extra long system prompt:")
         llama_results_extra_long = test_llama_cpp(
@@ -261,17 +323,27 @@ if __name__ == "__main__":
             system_prompt=EXTRA_LONG_SYSTEM_PROMPT
         )
         
+        mlx_results_extra_long = test_mlx(
+            model_name="mlx-community/SmolLM2-1.7B-Instruct",
+            test_prompts=TEST_PROMPTS,
+            system_prompt=EXTRA_LONG_SYSTEM_PROMPT
+        )
+        
         # Create DataFrame with results
         results_data = []
         for test_name, results in [
             ("No System Prompt - Llama.cpp", llama_results),
             ("No System Prompt - Transformers", transformers_results),
+            ("No System Prompt - MLX", mlx_results),
             ("Short System Prompt - Llama.cpp", llama_results_short),
             ("Short System Prompt - Transformers", transformers_results_short),
+            ("Short System Prompt - MLX", mlx_results_short),
             ("Long System Prompt - Llama.cpp", llama_results_long),
             ("Long System Prompt - Transformers", transformers_results_long),
+            ("Long System Prompt - MLX", mlx_results_long),
             ("Extra Long System Prompt - Llama.cpp", llama_results_extra_long),
             ("Extra Long System Prompt - Transformers", transformers_results_extra_long),
+            ("Extra Long System Prompt - MLX", mlx_results_extra_long),
         ]:
             system_prompt_type = test_name.split(" - ")[0]
             model_type = test_name.split(" - ")[1]
